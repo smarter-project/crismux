@@ -1,0 +1,8 @@
+runtimes:
+  default: "unix:///run/containerd_a/containerd.sock"
+  nelly: "unix:///run/containerd_b/containerd.sock"
+tls:
+  cert: "/path/to/cert.pem"
+  key: "/path/to/key.pem"
+  ca: "/path/to/ca.pem"
+
