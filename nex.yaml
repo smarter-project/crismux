@@ -1,0 +1,28 @@
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: nelly-example
+  labels:
+    k3s-app: nelly-example
+spec:
+  selector:
+    matchLabels:
+      name: nelly-example
+  template:
+    metadata:
+      labels:
+        name: nelly-example
+    spec:
+      runtimeClassName: nelly
+      tolerations:
+        - key: "smarter.type"
+          operator: "Equal"
+          value: "edge"
+          effect: "NoSchedule"
+      hostname: nelly-exampleh
+      containers:
+      - name: nelly-example-dummy-pod
+        image: alpine
+        command: ["/bin/ash", "-ec", "while :; do date; sleep 5 ; done"]
+      hostNetwork: true
+
