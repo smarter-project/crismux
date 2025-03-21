@@ -132,14 +132,14 @@ POD ID              CREATED             STATE               NAME                
 732dabbcfbedf       44 seconds ago      Ready               nelly-example-m4lwx   default             0                   nelly
 ```
 
-We can query also crismux get a unified view:
+We can also query crismux and get a unified view:
 
 ```sh
 crictl $X pods
 POD ID              CREATED             STATE               NAME                  NAMESPACE           ATTEMPT             RUNTIME
 732dabbcfbedf       2 minutes ago       Ready               nelly-example-m4lwx   default             0                   nelly
 2906c33d045b6       24 minutes ago      Ready               example-sxcfw         default             0                   (default)
-``
+```
 
 We can delete the pod:
 ```sh
