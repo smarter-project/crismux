@@ -44,7 +44,7 @@ crismux is a gRPC proxy server for Kubernetes Container Runtime Interface (CRI) 
 
 ### Configuration
 
-Create a `config.yaml` file with the following structure:
+For testing with two containerd running on the same node create a `config.yaml` file with the following structure:
 
 ```yaml
 runtimes:
@@ -55,6 +55,21 @@ tls:
   key: "/path/to/key.pem"
   ca: "/path/to/ca.pem"
 ```
+
+For testing with one containerd running on the same node and one runing in a vm (reachable via tcp) create a `config.yaml` file with the following structure:
+
+```yaml
+runtimes:
+  default: "unix:///run/containerd_a/containerd.sock"
+  nelly:   "tcp:localhost:35000"
+tls:
+  cert: "/path/to/cert.pem"
+  key: "/path/to/key.pem"
+  ca: "/path/to/ca.pem"
+```
+
+Note that the tls information is currently not used by crismux
+
 
 ### Running the Proxy
 

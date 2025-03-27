@@ -1,6 +1,6 @@
 runtimes:
   default: "unix:///run/containerd_a/containerd.sock"
-  nelly: "unix:///run/containerd_b/containerd.sock"
+  nelly:   "tcp:localhost:35000"
 tls:
   cert: "/path/to/cert.pem"
   key: "/path/to/key.pem"
