@@ -1,5 +1,6 @@
 runtimes:
   default: "unix:///run/containerd_a/containerd.sock"
+# This is the runtime for the secure containers
   nelly:   "tcp:localhost:35000"
 tls:
   cert: "/path/to/cert.pem"

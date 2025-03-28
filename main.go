@@ -6,8 +6,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"flag"
 	"io/ioutil"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -18,13 +18,14 @@ import (
 	"gopkg.in/yaml.v2"
 	"github.com/gogo/protobuf/jsonpb"	
 	cri "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"strings"
 )
 
 func printContainerConfig(config *cri.ContainerConfig) {
 	var buf bytes.Buffer
 	m := &jsonpb.Marshaler{Indent: "  "}
 	if err := m.Marshal(&buf, config); err != nil {
-		log.Fatalf("Failed to marshal: %v", err)
+		logrus.Fatalf("Failed to marshal: %v", err)
 	}
 	logrus.Debug(buf.String())
 }
@@ -34,7 +35,7 @@ func printPodSandboxConfig(config *cri.PodSandboxConfig) {
 	var buf bytes.Buffer
 	m := &jsonpb.Marshaler{Indent: "  "}
 	if err := m.Marshal(&buf, config); err != nil {
-		log.Fatalf("Failed to marshal PodSandboxConfig: %v", err)
+		logrus.Fatalf("Failed to marshal PodSandboxConfig: %v", err)
 	}
 	logrus.Debug(buf.String())
 }
@@ -79,18 +80,18 @@ type CRIProxy struct {
 
 
 func (p* CRIProxy) print() {
-	logrus.Infof("***** Internal DB START *****")
-	logrus.Infof("PodSandBoxes:")
+	logrus.Debugf("***** Internal DB START *****")
+	logrus.Debugf("PodSandBoxes:")
 	for k, sb := range p.sandboxes {
-		logrus.Infof("ID: %s %s", k, sb.RuntimeClass)
+		logrus.Debugf("ID: %s %s", k, sb.RuntimeClass)
 	}
 
-	logrus.Infof("Containers:")	
+	logrus.Debugf("Containers:")	
 	for k, rt := range p.containers {
-		logrus.Infof("ID: %s %s", k, rt)
+		logrus.Debugf("ID: %s %s", k, rt)
 	}
 		
-	logrus.Infof("***** Internal DB END *****")	
+	logrus.Debugf("***** Internal DB END *****")	
 }
 
 
@@ -278,13 +279,13 @@ func (p *CRIProxy) getImageClient(runtimeClass string) (cri.ImageServiceClient) 
 // Proxy function for RuntimeService
 func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeClass string, config *cri.PodSandboxConfig) (interface{}, error) {
 	//	logrus.Debug("proxyRuntime called")
-	client := p.getRuntimeClient(runtimeClass)
-	if client == nil {
-		return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
-	}
 	switch request := req.(type) {
         case *cri.RunPodSandboxRequest:
 		logrus.Infof("RunPodSandboxRequest called: %s", runtimeClass)
+		client := p.getRuntimeClient(runtimeClass)
+		if client == nil {
+			return &cri.RunPodSandboxResponse{}, nil
+		}
 		res, err := client.RunPodSandbox(ctx, request)
 		p.SetPodSandboxMapping(res.GetPodSandboxId(), runtimeClass, config.Metadata.Uid)
 		//		printPodSandboxConfig(config)
@@ -295,7 +296,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		logrus.Infof("StopPodSandboxRequest called: SandboxID: %s   runtimeClass: %s", request.GetPodSandboxId(), runtimeClass)		
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.StopPodSandboxResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.StopPodSandbox(ctx, request)
           
@@ -303,7 +304,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())		
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.RemovePodSandboxResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		logrus.Infof("RemovePodSandboxRequest called: SandboxID: %s   runtimeClass: %s", request.GetPodSandboxId(), runtimeClass)				
 		res, err := client.RemovePodSandbox(ctx, request)
@@ -316,7 +317,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.PodSandboxStatusResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		//		logrus.Debugf("PodSandboxStatusRequest called: SandboxID: %s   runtimeClass: %s", request.GetPodSandboxId(), runtimeClass)
 		return client.PodSandboxStatus(ctx, request)
@@ -350,7 +351,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.CreateContainerResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		res, err := client.CreateContainer(ctx, request)
 		p.SetContainerMapping(res.GetContainerId(), runtimeClass)
@@ -362,7 +363,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.StartContainerResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.StartContainer(ctx, request)
           
@@ -371,7 +372,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.StopContainerResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.StopContainer(ctx, request)
           
@@ -380,7 +381,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return  &cri.RemoveContainerResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		res, err := client.RemoveContainer(ctx, request)
 		if err == nil {
@@ -417,7 +418,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.ContainerStatusResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.ContainerStatus(ctx, request)
           
@@ -426,7 +427,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.UpdateContainerResourcesResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}	
 		return client.UpdateContainerResources(ctx, request)
 
@@ -435,7 +436,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.ReopenContainerLogResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.ReopenContainerLog(ctx, request)
           
@@ -444,7 +445,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.ExecSyncResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.ExecSync(ctx, request)
           
@@ -453,7 +454,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.ExecResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.Exec(ctx, request)
           	
@@ -462,7 +463,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.AttachResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.Attach(ctx, request)
           
@@ -471,7 +472,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.PortForwardResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.PortForward(ctx, request)
           
@@ -480,7 +481,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.ContainerStatsResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
 		return client.ContainerStats(ctx, request)
           
@@ -513,7 +514,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return nil, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
+			return &cri.PodSandboxStatsResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}		
 		return client.PodSandboxStats(ctx, request)
           
@@ -543,32 +544,61 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		//          return client.ListPodSandboxStats(ctx, request)
           
         case *cri.UpdateRuntimeConfigRequest:
+		client := p.getRuntimeClient(runtimeClass)
+		if client == nil {
+			return &cri.UpdateRuntimeConfigResponse{}, nil
+		}
 		logrus.Debug("UpdateRuntimeConfigRequest called")
           return client.UpdateRuntimeConfig(ctx, request)
           
         case *cri.StatusRequest:
 		logrus.Debug("StatusRequest called")
+		client := p.getRuntimeClient(runtimeClass)
+		if client == nil {
+			return &cri.StatusRequest{}, nil
+		}
 		return client.Status(ctx, request)
           
         case *cri.CheckpointContainerRequest:
 		logrus.Debug("CheckpointContainerRequest called")
+		client := p.getRuntimeClient(runtimeClass)
+		if client == nil {
+			return &cri.CheckpointContainerResponse{}, nil
+		}
+		
           return client.CheckpointContainer(ctx, request)
           
         case *cri.GetEventsRequest:
 		logrus.Debug("GetEventsRequest called")
+		client := p.getRuntimeClient(runtimeClass)
+		if client == nil {
+			return nil, nil
+		}		
 		return client.GetContainerEvents(ctx, request)
-          
+		
         case *cri.ListMetricDescriptorsRequest:
-		     logrus.Debug("ListMetricDescriptorsRequest called")
-          return client.ListMetricDescriptors(ctx, request)
+		logrus.Debug("ListMetricDescriptorsRequest called")
+		client := p.getRuntimeClient(runtimeClass)
+		if client == nil {
+			return &cri.ListMetricDescriptorsResponse{}, nil
+		}
+		return client.ListMetricDescriptors(ctx, request)
           
         case *cri.ListPodSandboxMetricsRequest:
-		     logrus.Debug("ListPodSandboxMetricsRequest called")
-          return client.ListPodSandboxMetrics(ctx, request)
+		logrus.Debug("ListPodSandboxMetricsRequest called")
+				client := p.getRuntimeClient(runtimeClass)
+		if client == nil {
+			return &cri.ListPodSandboxMetricsResponse{}, nil
+		}
+		return client.ListPodSandboxMetrics(ctx, request)
           
         case *cri.RuntimeConfigRequest:
-		     logrus.Debug("RuntimeConfigRequest called")
-          return client.RuntimeConfig(ctx, request)
+		logrus.Debug("RuntimeConfigRequest called")
+				client := p.getRuntimeClient(runtimeClass)
+		if client == nil {
+			return &cri.RuntimeConfigResponse{}, nil
+		}
+		return client.RuntimeConfig(ctx, request)
           
 	default:
 		return nil, fmt.Errorf("unsupported runtime request")
@@ -900,14 +930,33 @@ func (p *CRIProxy) initialise() {
 
 // Main function
 func main() {
-	configPath := "config.yaml"
-	config, err := loadConfig(configPath)
 
-	// Set log level
 	logrus.SetLevel(logrus.InfoLevel) // Change to DebugLevel, WarnLevel, etc.
 	
+	// Define flags with default values
+	configPath := flag.String("config", "config.yaml", "path to config file")
+	logLevel := flag.String("log-level", "info", "Set the log level (debug, info, warn, error, fatal, panic)")
+
+
+	// Parse command-line flags
+	flag.Parse()
+
+
+	// Set log level
+
+	level, err := logrus.ParseLevel(strings.ToLower(*logLevel))
+
+	if err != nil {
+		logrus.Debugf("Invalid log level: %s\n", *logLevel)			
+	}
+	logrus.SetLevel(level)
+
+
+	config, err := loadConfig(*configPath)
 	if err != nil {
 		logrus.Fatalf("Failed to load config: %v", err)
+	} else {
+		logrus.Infof("Loaded config from: %s", *configPath)
 	}
 
 	proxy := &CRIProxy{
@@ -931,13 +980,13 @@ func main() {
 		
 	listener, err := net.Listen("unix", "/var/run/crismux.sock")
 	if err != nil {
-		log.Fatalf("Failed to listen on socket: %v", err)
+		logrus.Fatalf("Failed to listen on socket: %v", err)
 	}
 
-	logrus.Debug("CRI Proxy started on /var/run/crismux.sock")
+	logrus.Info("CRI Proxy started on /var/run/crismux.sock")
 	defer proxy.CloseConnections() // Ensure cleanup
 
 	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Failed to start gRPC server: %v", err)
+		logrus.Fatalf("Failed to start gRPC server: %v", err)
 	}
 }
