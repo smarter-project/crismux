@@ -936,7 +936,7 @@ func main() {
 	// Define flags with default values
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	logLevel := flag.String("log-level", "info", "Set the log level (debug, info, warn, error, fatal, panic)")
-
+	socketPath := flag.String("socket", "/var/run/crismux.sock", "path to crismux socket") 
 
 	// Parse command-line flags
 	flag.Parse()
@@ -978,12 +978,12 @@ func main() {
 
 
 		
-	listener, err := net.Listen("unix", "/var/run/crismux.sock")
+	listener, err := net.Listen("unix", *socketPath)
 	if err != nil {
 		logrus.Fatalf("Failed to listen on socket: %v", err)
 	}
 
-	logrus.Info("CRI Proxy started on /var/run/crismux.sock")
+	logrus.Infof("CRI Proxy started on %s", *socketPath)
 	defer proxy.CloseConnections() // Ensure cleanup
 
 	if err := grpcServer.Serve(listener); err != nil {
