@@ -555,7 +555,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		logrus.Debug("StatusRequest called")
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
-			return &cri.StatusRequest{}, nil
+			return &cri.StatusResponse{}, nil
 		}
 		return client.Status(ctx, request)
           
