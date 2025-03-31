@@ -19,7 +19,7 @@ spec:
           operator: "Equal"
           value: "edge"
           effect: "NoSchedule"
-      hostname: nelly-exampleh
+      hostname: nelly-example-host
       containers:
       - name: nelly-example-dummy-pod
         image: alpine
