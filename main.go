@@ -19,6 +19,7 @@ import (
 	"github.com/gogo/protobuf/jsonpb"	
 	cri "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"strings"
+	"os"
 )
 
 func printContainerConfig(config *cri.ContainerConfig) {
@@ -943,7 +944,6 @@ func main() {
 
 
 	// Set log level
-
 	level, err := logrus.ParseLevel(strings.ToLower(*logLevel))
 
 	if err != nil {
@@ -952,6 +952,7 @@ func main() {
 	logrus.SetLevel(level)
 
 
+	// Load config
 	config, err := loadConfig(*configPath)
 	if err != nil {
 		logrus.Fatalf("Failed to load config: %v", err)
@@ -959,6 +960,21 @@ func main() {
 		logrus.Infof("Loaded config from: %s", *configPath)
 	}
 
+	// Check socket path
+	_, err = os.Stat(*socketPath)
+	if err == nil || !os.IsNotExist(err) {
+		// socket already exists
+		// lets try deleting
+		err := os.Remove(*socketPath)
+		if err != nil {
+			logrus.Fatalf("Failed to delete file: %v\n", err)
+			return
+		}
+	}
+
+
+
+	
 	proxy := &CRIProxy{
 		config:   config,
 		connPool: make(map[string]*grpc.ClientConn),
@@ -977,6 +993,7 @@ func main() {
 	cri.RegisterImageServiceServer(grpcServer, proxy)
 
 
+	
 		
 	listener, err := net.Listen("unix", *socketPath)
 	if err != nil {
