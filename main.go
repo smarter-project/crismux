@@ -61,7 +61,6 @@ type Config struct {
 type PodSandboxInfo struct {
 	RuntimeClass string 
 	Id string
-	//	Config *cri.PodSandboxConfig
 }
 
 
@@ -114,7 +113,7 @@ func (p *CRIProxy) getGRPCConn(runtimeClass string) (*grpc.ClientConn, error) {
 	logrus.Debugf("getGPRCConn called for runtime: %s", runtimeClass)
 	// Use cached connection if available
 	if conn, exists := p.connPool[runtimeClass]; exists {
-		logrus.Debug("Using cached connection")	
+		//	logrus.Debug("Using cached connection")	
 		return conn, nil
 	}
 
@@ -253,6 +252,7 @@ func (p *CRIProxy) getRuntimeClient(runtimeClass string) (cri.RuntimeServiceClie
 	if isClientReady(conn) {
 		return client
 	} else {
+		logrus.Debugf("Runtime Client for runtime %s not ready", runtimeClass)				
 		return nil
 	}
 }
@@ -272,6 +272,7 @@ func (p *CRIProxy) getImageClient(runtimeClass string) (cri.ImageServiceClient) 
 	if isClientReady(conn) {
 		return client
 	} else {
+		logrus.Debugf("Image Client for runtime %s not ready", runtimeClass)						
 		return nil
 	}
 }
@@ -876,17 +877,16 @@ func (p *CRIProxy) CloseConnections() {
 
 
 func isClientReady(conn *grpc.ClientConn) bool {
+	conn.Connect()
 	state := conn.GetState()
-
 
 	// Optionally wait for it to be READY
 	if state != connectivity.Ready {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
-
 		// Wait for the state to change to READY
 		if conn.WaitForStateChange(ctx, state) {
-			return conn.GetState() == connectivity.Ready
+			return conn.GetState() == connectivity.Ready 
 		}
 		return false
 	}
