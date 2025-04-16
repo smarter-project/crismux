@@ -37,11 +37,10 @@ build-crismux:
     - echo -e "machine gitlab.arm.com login gitlab-ci-token password ${CI_JOB_TOKEN}" > ~/.netrc
     - echo -e "machine git.gitlab.arm.com login gitlab-ci-token password ${CI_JOB_TOKEN}" >> ~/.netrc
     - go env -w GOPRIVATE="gitlab.com"
-    - cd "crismux"
-    - echo "Starting crismux"
+    - echo "Building crismux"
     - go build -o crismux
     - echo "Build finished"
   artifacts:
     paths:
-      - crismux/crismux
+      - crismux
 
