@@ -66,5 +66,5 @@ release_job:
     - export GLAB_NO_UPDATE=true
     - glab auth login --hostname git.gitlab.arm.com --job-token $CI_JOB_TOKEN
     - glab release create $CI_COMMIT_TAG --ref main
-    - ls -l main.go 
+    - glab release view $CI_COMMIT_TAG
     - glab release upload $CI_COMMIT_TAG main.go 
