@@ -33,8 +33,12 @@ stages:          # List of stages for jobs, and their order of execution
   - release
   
 
-publish:
-  stage: deploy
+test:
+  stage: publish
+  variables: 
+    CI_DEBUG_TRACE: "true"
+    CI_COMMIT_TAG: "v1.0.6"
+    DEBUG: 1
   script:
     - |
       curl --location --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
