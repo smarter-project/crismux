@@ -54,6 +54,7 @@ release_job:
   variables: 
     CI_DEBUG_TRACE: "true"
     CI_COMMIT_TAG: "v1.0.6"
+    DEBUG: 1
   stage: dev
   #dependencies:
   #  - build-crismux
