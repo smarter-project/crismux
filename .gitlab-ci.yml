@@ -50,6 +50,8 @@ build-crismux:
 
 
 release_job:
+  variables: 
+    CI_DEBUG_TRACE: "true"
   stage: release
   dependencies:
     - build-crismux
