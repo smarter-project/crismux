@@ -46,7 +46,7 @@ test:
     - |
       curl --location --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
            --upload-file main.go \
-           "${PACKAGE_URL"
+           "${PACKAGE_URL}"
 
 
 build-crismux:
