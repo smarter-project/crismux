@@ -23,7 +23,7 @@ variables:
   GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
   GOPRIVATE: "gitlab.arm.com"
   CI_COMMIT_TAG: "v1.0.8"
-  GLAB_TOKEN: ${CI_JOB_TOKEN}"
+  
   
 before_script:
 
@@ -65,9 +65,9 @@ release_job:
   script:
     - echo "Listing files..."
     - ls -alh
-#    - glab auth login --hostname git.gitlab.arm.com --token "${CI_JOB_TOKEN}"
-#    - glab auth login --hostname gitlab.arm.com --token "${CI_JOB_TOKEN}"
-#    - ls  -alh .git/
+    - glab auth login --hostname git.gitlab.arm.com --token "${CI_JOB_TOKEN}"
+    - glab auth login --hostname gitlab.arm.com --token "${CI_JOB_TOKEN}"
+    - cat ~/.config/glab-cli/config.yml || echo "No glab config yet"
     - glab auth status
     - glab release create "$CI_COMMIT_TAG" --ref main 
     - glab release upload "$CI_COMMIT_TAG" main.go 
