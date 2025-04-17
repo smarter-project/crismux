@@ -64,7 +64,7 @@ release_job:
   except:
     - defaults  # Don't run this job when a default branch commit is pushed
   script:
-    - glab auth login --hostname git.gitlab.arm.com --token ${GLAB_TOKEN}
-    - glab auth login --hostname gitlab.arm.com --token ${GLAB_TOKEN}
+    - glab auth login --hostname git.gitlab.arm.com --token ${MYTOKEN}
+    - glab auth login --hostname gitlab.arm.com --token ${MYTOKEN}
     - glab release create "$CI_COMMIT_TAG" --ref main 
     - glab release upload "$CI_COMMIT_TAG" crismux
