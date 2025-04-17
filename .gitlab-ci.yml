@@ -22,33 +22,16 @@ variables:
   GOPATH: "$CI_PROJECT_DIR/go"
   GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
   GOPRIVATE: "gitlab.arm.com"
-  CI_COMMIT_TAG: "v1.0.6"
-  PACKAGE_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/my_package/${CI_COMMIT_TAG}/main.go"
+  CI_COMMIT_TAG: "v1.0.8"
   
 before_script:
 
 
 stages:          # List of stages for jobs, and their order of execution
-  - publish
   - release
   - dev
   - build
   
-
-test:
-  stage: publish
-  variables: 
-    CI_DEBUG_TRACE: "true"
-    DEBUG: 1
-  image: alpine:latest
-  script:
-    - apk add curl
-    - |
-      curl --location --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-           --upload-file main.go \
-           "${PACKAGE_URL}"
-
-
 build-crismux:
   stage: build
   image: golang:1.23.4
@@ -65,7 +48,6 @@ build-crismux:
   rules:
     - if: '$CI_COMMIT_TAG'
       when: always
-
 
 
 release_job:
@@ -86,10 +68,7 @@ release_job:
     - glab config set skip_tls_verify true --host $CI_SERVER_HOST 
 #    - export GLAB_NO_UPDATE=true
     - glab auth login --hostname git.gitlab.arm.com --job-token $CI_JOB_TOKEN
-    - glab release create "$CI_COMMIT_TAG" --ref main --repo "https://git.gitlab.arm.com/research/smarter/edgeai/crismux"
-#    - glab release upload "$CI_COMMIT_TAG" --repo "https://git.gitlab.arm.com/research/smarter/edgeai/crismux" --assets-links "name=MyApp,url=https://gitlab.arm.com/api/v4/projects/596/packages/generic/my_package/v1.0.6/main.go"
+    - glab auth login --hostname gitlab.arm.com --job-token $CI_JOB_TOKEN
 
-    - glab release create "$CI_COMMIT_TAG" --ref "$CI_COMMIT_SHA" --repo "research/smarter/edgeai/crismux" --assets-links "name=MyApp,url=https://gitlab.arm.com/api/v4/projects/596/packages/generic/my_package/v1.0.6/main.go"
-
-
-#    - glab release upload "$CI_COMMIT_TAG" main.go --repo "https://git.gitlab.arm.com/research/smarter/edgeai/crismux" --name "Binary"  --filepath "downloads/main.go"
+    - glab release create "$CI_COMMIT_TAG" --ref main --repo "research/smarter/edgeai/crismux"
+    - glab release upload "$CI_COMMIT_TAG" main.go --repo "research/smarter/edgeai/crismux"
