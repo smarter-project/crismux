@@ -27,6 +27,7 @@ before_script:
 
 
 stages:          # List of stages for jobs, and their order of execution
+  - dev
   - build
   - release
   
@@ -53,7 +54,7 @@ release_job:
     CI_DEBUG_TRACE: "true"
     DEBUG: 1
     
-  stage: release
+  stage: dev
   #dependencies:
   #  - build-crismux
   image: gitlab/glab:latest
