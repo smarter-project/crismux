@@ -27,6 +27,7 @@ before_script:
 
 
 stages:          # List of stages for jobs, and their order of execution
+  - dev
   - build
   - release
   
@@ -55,9 +56,9 @@ build-crismux:
     - defaults  # Don't run this job when a default branch commit is pushed
 
 release_job:
-  stage: release
-  dependencies:
-    - build-crismux
+  stage: dev
+#  dependencies:
+#    - build-crismux
   image: gitlab/glab:latest
   only:
     - tags  # Only run this job when a tag is pushed
@@ -67,4 +68,4 @@ release_job:
     - glab auth login --hostname git.gitlab.arm.com --token ${MYTOKEN}
     - glab auth login --hostname gitlab.arm.com --token ${MYTOKEN}
     - glab release create "$CI_COMMIT_TAG" --ref main 
-    - glab release upload "$CI_COMMIT_TAG" crismux
+    - glab release upload "$CI_COMMIT_TAG" main.go
