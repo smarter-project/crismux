@@ -27,16 +27,14 @@ before_script:
 
 
 stages:          # List of stages for jobs, and their order of execution
-  - test
-  - dev
   - build
   - release
   
 
-test:
-  stage: test
-  script:
-    - echo ${GLAB_TOKEN}
+#test:
+#  stage: test
+#  script:
+#    - echo ${GLAB_TOKEN}
 
 build-crismux:
   stage: build
@@ -57,13 +55,9 @@ build-crismux:
     - defaults  # Don't run this job when a default branch commit is pushed
 
 release_job:
-  variables: 
-    CI_DEBUG_TRACE: "true"
-    DEBUG: 1
-    
   stage: release
-  #dependencies:
-  #  - build-crismux
+  dependencies:
+    - build-crismux
   image: gitlab/glab:latest
   only:
     - tags  # Only run this job when a tag is pushed
