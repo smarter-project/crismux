@@ -79,4 +79,4 @@ release_job:
   script:
     - glab auth login --hostname git.gitlab.arm.com --token ${MYTOKEN}
     - glab auth login --hostname gitlab.arm.com --token ${MYTOKEN}
-    - glab release create "$CI_COMMIT_TAG" --ref main --assets-link "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$CI_COMMIT_TAG/$PACKAGE_NAME"
+    - glab release create "$CI_COMMIT_TAG" --ref main --assets-links "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$CI_COMMIT_TAG/$PACKAGE_NAME"
