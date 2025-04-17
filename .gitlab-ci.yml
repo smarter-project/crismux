@@ -41,12 +41,13 @@ upload_package:
     - build-crismux
   script:
   - |
+    apk add curl
     curl --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file $PACKAGE_NAME "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$CI_COMMIT_TAG/$PACKAGE_NAME"
+  only:
+    - tags  # Only run this job when a tag is pushed
+  except:
+    - defaults  # Don't run this job when a default branch commit is pushed
 
-#test:
-#  stage: test
-#  script:
-#    - echo ${GLAB_TOKEN}
 
 build-crismux:
   stage: build
