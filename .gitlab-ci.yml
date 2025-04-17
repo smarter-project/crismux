@@ -68,6 +68,5 @@ release_job:
     - glab auth login --hostname git.gitlab.arm.com --token ${GLAB_TOKEN}
     - glab auth login --hostname gitlab.arm.com --token ${GLAB_TOKEN}
     - cat ~/.config/glab-cli/config.yml || echo "No glab config yet"
-#    - glab auth status
     - glab release create "$CI_COMMIT_TAG" --ref main 
     - glab release upload "$CI_COMMIT_TAG" main.go 
