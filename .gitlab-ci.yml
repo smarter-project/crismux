@@ -22,7 +22,6 @@ variables:
   GOPATH: "$CI_PROJECT_DIR/go"
   GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
   GOPRIVATE: "gitlab.arm.com"
-  CI_COMMIT_TAG: "v1.0.8"
   
 before_script:
 
