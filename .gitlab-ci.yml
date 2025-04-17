@@ -22,14 +22,26 @@ variables:
   GOPATH: "$CI_PROJECT_DIR/go"
   GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
   GOPRIVATE: "gitlab.arm.com"
+  PACKAGE_NAME: "crismux"
+  PACKAGE_VERSION: "1.0.0"
+
   
 before_script:
 
 
 stages:          # List of stages for jobs, and their order of execution
   - build
+  - package
   - release
   
+
+upload_package:
+  stage: package
+  dependencies:
+    - build-crismux
+  script:
+  - |
+    curl --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file $PACKAGE_NAME "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$CI_COMMIT_TAG/$PACKAGE_NAME"
 
 #test:
 #  stage: test
@@ -57,7 +69,7 @@ build-crismux:
 release_job:
   stage: release
   dependencies:
-    - build-crismux
+    - upload_package
   image: gitlab/glab:latest
   only:
     - tags  # Only run this job when a tag is pushed
