@@ -65,8 +65,8 @@ release_job:
   script:
     - echo "Listing files..."
     - ls -alh
-    - glab auth login --hostname git.gitlab.arm.com --token "${CI_JOB_TOKEN}"
-    - glab auth login --hostname gitlab.arm.com --token "${CI_JOB_TOKEN}"
+    - glab auth login --hostname git.gitlab.arm.com --token "jMoHxiXsZbSAfzjj2Kbd"
+    - glab auth login --hostname gitlab.arm.com --token "jMoHxiXsZbSAfzjj2Kbd"
     - cat ~/.config/glab-cli/config.yml || echo "No glab config yet"
     - glab auth status
     - glab release create "$CI_COMMIT_TAG" --ref main 
