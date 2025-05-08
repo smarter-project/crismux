@@ -22,6 +22,35 @@ import (
 	"os"
 )
 
+
+func (p *CRIProxy) isImagePresent(ctx context.Context, image *cri.ImageSpec, runtimeClass string) bool {
+     logrus.Debug("checkStatusRequest called")
+     client := p.getImageClient(runtimeClass)
+     if client == nil {
+       return false
+     }
+     req := &cri.ImageStatusRequest{Image: image}
+     
+     resp, err := client.ImageStatus(ctx, req)
+     if err!= nil {
+       panic(err)
+     }
+     return resp.Image != nil
+
+}
+
+
+func printPullImageRequest(req *cri.PullImageRequest) {
+	var buf bytes.Buffer
+	m := &jsonpb.Marshaler{Indent: "  "}
+	if err := m.Marshal(&buf, req); err != nil {
+		logrus.Fatalf("Failed to marshal: %v", err)
+	}
+	logrus.Info(buf.String())
+}
+
+
+
 func printContainerConfig(config *cri.ContainerConfig) {
 	var buf bytes.Buffer
 	m := &jsonpb.Marshaler{Indent: "  "}
@@ -56,6 +85,7 @@ type Config struct {
 		Key  string `yaml:"key"`
 		CA   string `yaml:"ca"`
 	} `yaml:"tls"`
+	LogLevel string `yaml:"loglevel"`
 }
 
 type PodSandboxInfo struct {
@@ -110,7 +140,7 @@ func loadConfig(path string) (Config, error) {
 func (p *CRIProxy) getGRPCConn(runtimeClass string) (*grpc.ClientConn, error) {
 	p.connMutex.Lock()
 	defer p.connMutex.Unlock()
-	logrus.Debugf("getGPRCConn called for runtime: %s", runtimeClass)
+//	logrus.Debugf("getGPRCConn called for runtime: %s", runtimeClass)
 	// Use cached connection if available
 	if conn, exists := p.connPool[runtimeClass]; exists {
 		//	logrus.Debug("Using cached connection")	
@@ -129,7 +159,7 @@ func (p *CRIProxy) getGRPCConn(runtimeClass string) (*grpc.ClientConn, error) {
 
 	var opts []grpc.DialOption
 
-	logrus.Debugf("Endpoint: %s", endpoint)
+//	logrus.Debugf("Endpoint: %s", endpoint)
 	switch {
 	case endpoint[:5] == "unix:":
 		opts = append(opts, grpc.WithInsecure(), grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
@@ -155,7 +185,7 @@ func (p *CRIProxy) getGRPCConn(runtimeClass string) (*grpc.ClientConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	logrus.Debugf("Target: %s      state: %s", conn.Target(), conn.GetState())
+//	logrus.Debugf("Target: %s      state: %s", conn.Target(), conn.GetState())
 	p.connPool[runtimeClass] = conn
 
 	return conn, nil
@@ -349,19 +379,37 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
          	return merged, nil
           
         case *cri.CreateContainerRequest:
-		logrus.Info("CreateContainerRequest called")
+		logrus.Debug("CreateContainerRequest called")
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
 			return &cri.CreateContainerResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
+
+    		if runtimeClass == ""  || runtimeClass == "default" {
+	 	} else {
+      		  // Lets see what the image is
+		  logrus.Debugf("Checking the status of image: %s", request.GetConfig().GetImage())			  
+  		  image := request.GetConfig().GetImage();
+		  // Check if image is not present 
+		  if !p.isImagePresent(ctx, image, runtimeClass) {
+		     logrus.Debugf("image is NOT PRESENT")				
+		     iclient := p.getImageClient(runtimeClass)
+		     userimage := &cri.ImageSpec{Image: image.GetUserSpecifiedImage(),}
+		      _, err := iclient.PullImage(ctx, &cri.PullImageRequest{Image: userimage,})
+		      if err != nil {
+		          logrus.Infof("failed to pull image: %w", err)				      
+			  return nil, err
+		      }		  
+		  }
+                }
 		res, err := client.CreateContainer(ctx, request)
 		p.SetContainerMapping(res.GetContainerId(), runtimeClass)
 		//		printContainerConfig(request.GetConfig())
 		return res, err
           
         case *cri.StartContainerRequest:
-		logrus.Infof("StartContainerRequest called for container id: %s", request.GetContainerId())
+		logrus.Debugf("StartContainerRequest called for container id: %s", request.GetContainerId())
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -370,7 +418,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		return client.StartContainer(ctx, request)
           
         case *cri.StopContainerRequest:
-		logrus.Infof("StopContainerRequest called for container id: %s", request.GetContainerId())
+		logrus.Debugf("StopContainerRequest called for container id: %s", request.GetContainerId())
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -379,7 +427,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		return client.StopContainer(ctx, request)
           
         case *cri.RemoveContainerRequest:
-		logrus.Infof("RemoveContainerRequest called container id: %s", request.GetContainerId())
+		logrus.Debugf("RemoveContainerRequest called container id: %s", request.GetContainerId())
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -625,25 +673,18 @@ func (p *CRIProxy) proxyImage(ctx context.Context, req interface{}, runtimeClass
 	        logrus.Debug("ListImagesRequest called")
 		var imageResponses []*cri.ListImagesResponse
 		// Collect all the image responses
-         	for runtimeClass, _ := range p.config.Runtimes {
-			logrus.Debugf("Getting images for runtime: %s", runtimeClass)
-			client := p.getImageClient(runtimeClass)			
-			if client != nil {
-				res, err := client.ListImages(ctx, request)
-				if err != nil {
-					return nil, err
-				}    
-				imageResponses = append(imageResponses, res)
-			}
-                }
-		// Merge the image responses into a single response
-		merged := &cri.ListImagesResponse{}
-		for _, resp := range imageResponses {
-  		  if resp != nil {
-		    merged.Images = append(merged.Images, resp.GetImages()...)
-		  }
+		runtimeClass = "default"
+		logrus.Debugf("Getting images for runtime: %s", runtimeClass)
+		client := p.getImageClient(runtimeClass)			
+		if client != nil {
+		  res, err := client.ListImages(ctx, request)
+		  if err != nil {
+			return nil, err
+		  }    
+		  return res, nil
+		} else {
+		  return imageResponses, nil
 		}
-         	return merged, nil
 	case *cri.ImageStatusRequest:
 	        logrus.Debug("ImageStatusRequest called")
 		client := p.getImageClient(runtimeClass)
@@ -816,14 +857,10 @@ func (p *CRIProxy) RuntimeConfig(ctx context.Context, req *cri.RuntimeConfigRequ
 
 
 
-
-
-
-
-
 // Implement ImageService
 func (p *CRIProxy) PullImage(ctx context.Context, req *cri.PullImageRequest) (*cri.PullImageResponse, error) {
-        logrus.Debug("PullImage called")	
+        logrus.Debug("PullImage called")
+//        printPullImageRequest(req)		
 	res, err := p.proxyImage(ctx, req, req.Image.Image, req.SandboxConfig)
 	return res.(*cri.PullImageResponse), err
 }
@@ -842,7 +879,7 @@ func (p *CRIProxy) ImageStatus(ctx context.Context, req *cri.ImageStatusRequest)
 
 
 func (p *CRIProxy) ImageFsInfo(ctx context.Context, req *cri.ImageFsInfoRequest) (*cri.ImageFsInfoResponse, error) {
-//        logrus.Debug("ImageFsInfo called")	
+        logrus.Debug("ImageFsInfo called")	
 	res, err := p.proxyImage(ctx, req, "", nil)
 	return res.(*cri.ImageFsInfoResponse), err
 }
@@ -943,15 +980,6 @@ func main() {
 	flag.Parse()
 
 
-	// Set log level
-	level, err := logrus.ParseLevel(strings.ToLower(*logLevel))
-
-	if err != nil {
-		logrus.Debugf("Invalid log level: %s\n", *logLevel)			
-	}
-	logrus.SetLevel(level)
-
-
 	// Load config
 	config, err := loadConfig(*configPath)
 	if err != nil {
@@ -959,6 +987,23 @@ func main() {
 	} else {
 		logrus.Infof("Loaded config from: %s", *configPath)
 	}
+
+
+	// Set log level
+	var log *string	
+	if config.LogLevel != "" {
+	  log = &config.LogLevel
+
+	} else {
+  	   log = logLevel
+	}
+	level, err := logrus.ParseLevel(strings.ToLower(*log))
+
+	if err != nil {
+		logrus.Debugf("Invalid log level: %s\n", *log)			
+	}
+        logrus.Infof("Setting log level: %s\n", level)				
+	logrus.SetLevel(level)
 
 	// Check socket path
 	_, err = os.Stat(*socketPath)
