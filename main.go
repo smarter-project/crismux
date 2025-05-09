@@ -23,6 +23,42 @@ import (
 )
 
 
+func (p *CRIProxy) startStatusCheck(ctx context.Context) {
+    ticker := time.NewTicker(p.checkTime)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ctx.Done():
+            fmt.Println("Shutting down background task")
+            return
+        case <-ticker.C:
+			//			logrus.Info("Checking")
+         	for runtimeClass, _ := range p.config.Runtimes {
+				client := p.getRuntimeClient(runtimeClass)
+				if client != nil {
+					req := &cri.StatusRequest{}
+					res, err := client.Status(ctx, req)
+					if err != nil {
+						//						logrus.Infof("runtime:%s   error: %s", runtimeClass, err)
+						p.clearConnReady(runtimeClass, "Runtime")											
+					}
+					if res == nil {
+						//						logrus.Infof("runtime:%s   nil ressult", runtimeClass)
+						p.clearConnReady(runtimeClass, "Runtime")						
+					} else {
+						p.setConnReady(runtimeClass, "Runtime")
+					}
+				} else {
+					//					logrus.Infof("runtime:%s   nil client", runtimeClass)					
+					p.clearConnReady(runtimeClass, "Runtime")						
+				}
+			}
+        }
+    }
+}
+
+
+
 func (p *CRIProxy) isImagePresent(ctx context.Context, image *cri.ImageSpec, runtimeClass string) bool {
      logrus.Debug("checkStatusRequest called")
      client := p.getImageClient(runtimeClass)
@@ -86,6 +122,7 @@ type Config struct {
 		CA   string `yaml:"ca"`
 	} `yaml:"tls"`
 	LogLevel string `yaml:"loglevel"`
+	CheckTime int `yaml:"checkinterval"`
 }
 
 type PodSandboxInfo struct {
@@ -103,9 +140,11 @@ type CRIProxy struct {
 	config    Config
 	connMutex sync.Mutex
 	connPool  map[string]*grpc.ClientConn
+	connReady map[string]*bool
 	sandboxes map[string]*PodSandboxInfo
 	sandboxconfigs map[string]string
-	containers map[string]string	
+	containers map[string]string
+	checkTime time.Duration
 }
 
 
@@ -269,40 +308,62 @@ func (p *CRIProxy) RemoveSandboxConfigMapping(config *cri.PodSandboxConfig) {
 
 
 
+func (p *CRIProxy) setConnReady(runtimeClass string, serviceType string) {
+	if runtimeClass == "" {
+		runtimeClass = "default"
+	}
+	if p.connReady[runtimeClass] == nil {
+		p.connReady[runtimeClass] = new(bool)
+		logrus.Infof("***** %s Client for runtime %s is ready", serviceType, runtimeClass)
+		*p.connReady[runtimeClass] = true;
+	} else if *p.connReady[runtimeClass] == false {
+		logrus.Infof("***** %s Client for runtime %s is ready", serviceType, runtimeClass)
+		*p.connReady[runtimeClass] = true;
+	}
+}
+
+func (p *CRIProxy) clearConnReady(runtimeClass string, serviceType string) {
+	if runtimeClass == "" {
+		runtimeClass = "default"
+	}
+	if p.connReady[runtimeClass] == nil {
+		p.connReady[runtimeClass] = new(bool)
+		logrus.Infof("***** %s Client for runtime %s is not ready", serviceType, runtimeClass)
+		*p.connReady[runtimeClass] = false		
+	} else if *p.connReady[runtimeClass] == true{
+		logrus.Infof("***** %s Client for runtime %s is not ready", serviceType, runtimeClass)
+		*p.connReady[runtimeClass] = false;
+	}
+}
+
+
 func (p *CRIProxy) getRuntimeClient(runtimeClass string) (cri.RuntimeServiceClient) {
 	if runtimeClass == "" {
 		runtimeClass = "default"
 	}
-	conn, err := p.getGRPCConn(runtimeClass) 
+	conn, err := p.getGRPCConn(runtimeClass)
 	if err != nil {
 		return nil
 	}
-	client := cri.NewRuntimeServiceClient(conn)
-
 	if isClientReady(conn) {
-		return client
+		return cri.NewRuntimeServiceClient(conn)
 	} else {
-		logrus.Debugf("Runtime Client for runtime %s not ready", runtimeClass)				
 		return nil
 	}
 }
-
 
 
 func (p *CRIProxy) getImageClient(runtimeClass string) (cri.ImageServiceClient) {
 	if runtimeClass == "" {
 		runtimeClass = "default"
 	}
-	conn, err := p.getGRPCConn(runtimeClass) 
+	conn, err := p.getGRPCConn(runtimeClass)
 	if err != nil {
 		return nil
 	}
-	client := cri.NewImageServiceClient(conn)
-
 	if isClientReady(conn) {
-		return client
+		return cri.NewImageServiceClient(conn)
 	} else {
-		logrus.Debugf("Image Client for runtime %s not ready", runtimeClass)						
 		return nil
 	}
 }
@@ -312,7 +373,7 @@ func (p *CRIProxy) getImageClient(runtimeClass string) (cri.ImageServiceClient) 
 func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeClass string, config *cri.PodSandboxConfig) (interface{}, error) {
 	//	logrus.Debug("proxyRuntime called")
 	switch request := req.(type) {
-        case *cri.RunPodSandboxRequest:
+	case *cri.RunPodSandboxRequest:
 		logrus.Infof("RunPodSandboxRequest called: %s", runtimeClass)
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -322,8 +383,8 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		p.SetPodSandboxMapping(res.GetPodSandboxId(), runtimeClass, config.Metadata.Uid)
 		//		printPodSandboxConfig(config)
 		return res, err
-          
-        case *cri.StopPodSandboxRequest:
+		
+	case *cri.StopPodSandboxRequest:
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		logrus.Infof("StopPodSandboxRequest called: SandboxID: %s   runtimeClass: %s", request.GetPodSandboxId(), runtimeClass)		
 		client := p.getRuntimeClient(runtimeClass)
@@ -332,7 +393,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.StopPodSandbox(ctx, request)
           
-        case *cri.RemovePodSandboxRequest:
+	case *cri.RemovePodSandboxRequest:
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())		
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -345,7 +406,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return res, err
           
-        case *cri.PodSandboxStatusRequest:
+	case *cri.PodSandboxStatusRequest:
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -354,21 +415,25 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		//		logrus.Debugf("PodSandboxStatusRequest called: SandboxID: %s   runtimeClass: %s", request.GetPodSandboxId(), runtimeClass)
 		return client.PodSandboxStatus(ctx, request)
           
-        case *cri.ListPodSandboxRequest:
-		//		logrus.Debug("ListPodSandboxRequest called")
+	case *cri.ListPodSandboxRequest:
+		logrus.Debug("ListPodSandboxRequest called")
   		var PodSandboxResponses []*cri.ListPodSandboxResponse
 		// Collect all the PodSandbox responses
          	for runtimeClass, _ := range p.config.Runtimes {
-			//logrus.Debugf("Getting PodSandboxes for runtime: %s", runtimeClass)
+			logrus.Debugf("Getting PodSandboxes for runtime: %s", runtimeClass)
 			client := p.getRuntimeClient(runtimeClass)
 			if client != nil {
 				res, err := client.ListPodSandbox(ctx, request)
 				if err != nil {
 					return nil, err
-				}    
-				PodSandboxResponses = append(PodSandboxResponses, res)
+				}
+				if res == nil {
+				} else {
+					PodSandboxResponses = append(PodSandboxResponses, res)
+				}
+			} else {
 			}
-                }
+		}
 		// Merge the PodSandbox responses into a single response
 		merged := &cri.ListPodSandboxResponse{}
 		for _, resp := range PodSandboxResponses {
@@ -378,17 +443,17 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
          	return merged, nil
           
-        case *cri.CreateContainerRequest:
+	case *cri.CreateContainerRequest:
 		logrus.Debug("CreateContainerRequest called")
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
 			return &cri.CreateContainerResponse{}, fmt.Errorf("Cannot connect to runtime: %s", runtimeClass)
 		}
-
-    		if runtimeClass == ""  || runtimeClass == "default" {
+		
+    	if runtimeClass == ""  || runtimeClass == "default" {
 	 	} else {
-      		  // Lets see what the image is
+      	  // Lets see what the image is
 		  logrus.Debugf("Checking the status of image: %s", request.GetConfig().GetImage())			  
   		  image := request.GetConfig().GetImage();
 		  // Check if image is not present 
@@ -398,17 +463,16 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		     userimage := &cri.ImageSpec{Image: image.GetUserSpecifiedImage(),}
 		      _, err := iclient.PullImage(ctx, &cri.PullImageRequest{Image: userimage,})
 		      if err != nil {
-		          logrus.Infof("failed to pull image: %w", err)				      
+		          logrus.Infof("failed to pull image: %s", err)				      
 			  return nil, err
 		      }		  
 		  }
-                }
+		}
 		res, err := client.CreateContainer(ctx, request)
 		p.SetContainerMapping(res.GetContainerId(), runtimeClass)
-		//		printContainerConfig(request.GetConfig())
 		return res, err
           
-        case *cri.StartContainerRequest:
+	case *cri.StartContainerRequest:
 		logrus.Debugf("StartContainerRequest called for container id: %s", request.GetContainerId())
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -417,7 +481,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.StartContainer(ctx, request)
           
-        case *cri.StopContainerRequest:
+	case *cri.StopContainerRequest:
 		logrus.Debugf("StopContainerRequest called for container id: %s", request.GetContainerId())
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -426,7 +490,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.StopContainer(ctx, request)
           
-        case *cri.RemoveContainerRequest:
+	case *cri.RemoveContainerRequest:
 		logrus.Debugf("RemoveContainerRequest called container id: %s", request.GetContainerId())
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -439,12 +503,12 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return res, err
           
-        case *cri.ListContainersRequest:
+	case *cri.ListContainersRequest:
 		//		logrus.Debug("ListContainersRequest called")
 		var containerResponses []*cri.ListContainersResponse
 		// Collect all the container responses
          	for runtimeClass, _ := range p.config.Runtimes {
-			//			logrus.Debugf("Getting containers for runtime: %s", runtimeClass)
+			logrus.Debugf("Getting containers for runtime: %s", runtimeClass)
 			client := p.getRuntimeClient(runtimeClass)
 			if client != nil {
 				res, err := client.ListContainers(ctx, request)
@@ -452,6 +516,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 					return nil, err
 				}    
 				containerResponses = append(containerResponses, res)
+			} else {
 			}
                 }
 		// Merge the container responses into a single response
@@ -463,7 +528,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
          	return merged, nil
 		
-        case *cri.ContainerStatusRequest:
+	case *cri.ContainerStatusRequest:
 		logrus.Debugf("ContainerStatusRequest called for container id: %s", request.GetContainerId())
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -472,7 +537,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.ContainerStatus(ctx, request)
           
-        case *cri.UpdateContainerResourcesRequest:
+	case *cri.UpdateContainerResourcesRequest:
 		logrus.Debugf("UpdateContainerResourcesRequest called for container id: %s", request.GetContainerId())
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -481,7 +546,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}	
 		return client.UpdateContainerResources(ctx, request)
 
-        case *cri.ReopenContainerLogRequest:
+	case *cri.ReopenContainerLogRequest:
 		logrus.Debug("ReopenContainerLogRequest called")
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -490,7 +555,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.ReopenContainerLog(ctx, request)
           
-        case *cri.ExecSyncRequest:
+	case *cri.ExecSyncRequest:
 		logrus.Debug("ExecSyncRequest called")
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -499,7 +564,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.ExecSync(ctx, request)
           
-        case *cri.ExecRequest:
+	case *cri.ExecRequest:
 		logrus.Debug("ExecRequest called")
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -508,7 +573,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.Exec(ctx, request)
           	
-        case *cri.AttachRequest:
+	case *cri.AttachRequest:
 		logrus.Debug("AttachRequest called")
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -517,7 +582,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.Attach(ctx, request)
           
-        case *cri.PortForwardRequest:
+	case *cri.PortForwardRequest:
 		logrus.Debug("PortForwardRequest called")
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -526,7 +591,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.PortForward(ctx, request)
           
-        case *cri.ContainerStatsRequest:
+	case *cri.ContainerStatsRequest:
 		logrus.Debugf("ContainerStatsRequest called container id: %s", request.GetContainerId())
 		runtimeClass = p.GetContainerMapping(request.GetContainerId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -535,7 +600,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.ContainerStats(ctx, request)
           
-        case *cri.ListContainerStatsRequest:
+	case *cri.ListContainerStatsRequest:
 		logrus.Debug("ListContainerStatsRequest called")
 		var listContainerStatsResponses []*cri.ListContainerStatsResponse
 		// Collect all the container responses
@@ -559,7 +624,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
          	return merged, nil
 
-        case *cri.PodSandboxStatsRequest:
+	case *cri.PodSandboxStatsRequest:
 		logrus.Debug("PodSandboxStatsRequest called")
 		runtimeClass = p.GetPodSandboxMapping(request.GetPodSandboxId())
 		client := p.getRuntimeClient(runtimeClass)
@@ -568,7 +633,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}		
 		return client.PodSandboxStats(ctx, request)
           
-        case *cri.ListPodSandboxStatsRequest:
+	case *cri.ListPodSandboxStatsRequest:
 		logrus.Debug("ListPodSandboxStatsRequest called")
 		var listPodSandboxStatsResponses []*cri.ListPodSandboxStatsResponse
 		// Collect all the container responses
@@ -593,7 +658,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
          	return merged, nil
 		//          return client.ListPodSandboxStats(ctx, request)
           
-        case *cri.UpdateRuntimeConfigRequest:
+	case *cri.UpdateRuntimeConfigRequest:
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
 			return &cri.UpdateRuntimeConfigResponse{}, nil
@@ -601,7 +666,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		logrus.Debug("UpdateRuntimeConfigRequest called")
           return client.UpdateRuntimeConfig(ctx, request)
           
-        case *cri.StatusRequest:
+	case *cri.StatusRequest:
 		logrus.Debug("StatusRequest called")
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -609,16 +674,16 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.Status(ctx, request)
           
-        case *cri.CheckpointContainerRequest:
+	case *cri.CheckpointContainerRequest:
 		logrus.Debug("CheckpointContainerRequest called")
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
 			return &cri.CheckpointContainerResponse{}, nil
 		}
 		
-          return client.CheckpointContainer(ctx, request)
+		return client.CheckpointContainer(ctx, request)
           
-        case *cri.GetEventsRequest:
+	case *cri.GetEventsRequest:
 		logrus.Debug("GetEventsRequest called")
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -626,7 +691,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}		
 		return client.GetContainerEvents(ctx, request)
 		
-        case *cri.ListMetricDescriptorsRequest:
+	case *cri.ListMetricDescriptorsRequest:
 		logrus.Debug("ListMetricDescriptorsRequest called")
 		client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -634,7 +699,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.ListMetricDescriptors(ctx, request)
           
-        case *cri.ListPodSandboxMetricsRequest:
+	case *cri.ListPodSandboxMetricsRequest:
 		logrus.Debug("ListPodSandboxMetricsRequest called")
 				client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -642,7 +707,7 @@ func (p *CRIProxy) proxyRuntime(ctx context.Context, req interface{}, runtimeCla
 		}
 		return client.ListPodSandboxMetrics(ctx, request)
           
-        case *cri.RuntimeConfigRequest:
+	case *cri.RuntimeConfigRequest:
 		logrus.Debug("RuntimeConfigRequest called")
 				client := p.getRuntimeClient(runtimeClass)
 		if client == nil {
@@ -670,20 +735,24 @@ func (p *CRIProxy) proxyImage(ctx context.Context, req interface{}, runtimeClass
 		}
 		return client.PullImage(ctx, request)
 	case *cri.ListImagesRequest:
-	        logrus.Debug("ListImagesRequest called")
-		var imageResponses []*cri.ListImagesResponse
+		logrus.Debug("ListImagesRequest called")
+		merged := &cri.ListImagesResponse{}		
 		// Collect all the image responses
 		runtimeClass = "default"
 		logrus.Debugf("Getting images for runtime: %s", runtimeClass)
-		client := p.getImageClient(runtimeClass)			
+		client := p.getImageClient(runtimeClass)
+		logrus.Debug("Here")
 		if client != nil {
+		  logrus.Debug("client not nil")
 		  res, err := client.ListImages(ctx, request)
-		  if err != nil {
-			return nil, err
+			if err != nil {
+				logrus.Debug("err not nil")
+				return merged, err
 		  }    
 		  return res, nil
 		} else {
-		  return imageResponses, nil
+			logrus.Debug("Now here")			
+		  return merged, nil
 		}
 	case *cri.ImageStatusRequest:
 	        logrus.Debug("ImageStatusRequest called")
@@ -714,124 +783,220 @@ func (p *CRIProxy) proxyImage(ctx context.Context, req interface{}, runtimeClass
 // Implement RuntimeService
 func (p *CRIProxy) RunPodSandbox(ctx context.Context, req *cri.RunPodSandboxRequest) (*cri.RunPodSandboxResponse, error) {
 	res, err := p.proxyRuntime(ctx, req, req.RuntimeHandler, req.Config)
-	return res.(*cri.RunPodSandboxResponse), err
+	if res != nil {
+		return res.(*cri.RunPodSandboxResponse), err
+	} else {
+		return nil, err
+	}
 }
 
 func (p *CRIProxy) CreateContainer(ctx context.Context, req *cri.CreateContainerRequest) (*cri.CreateContainerResponse, error) {
 	res, err := p.proxyRuntime(ctx, req, "", nil)
-	return res.(*cri.CreateContainerResponse), err
+	if res != nil {
+		return res.(*cri.CreateContainerResponse), err
+	} else {
+		return nil, err
+	}
 }
 
 func (p *CRIProxy) ListContainers(ctx context.Context, req *cri.ListContainersRequest) (*cri.ListContainersResponse, error) {
 	res, err := p.proxyRuntime(ctx, req, "", nil)
-	return res.(*cri.ListContainersResponse), err
+	if (res != nil) {
+		return res.(*cri.ListContainersResponse), err
+	} else {
+		return nil, err
+	}
 }
 
 func (p *CRIProxy) StopPodSandbox(ctx context.Context, req *cri.StopPodSandboxRequest) (*cri.StopPodSandboxResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.StopPodSandboxResponse), err
+	if res != nil {
+		return res.(*cri.StopPodSandboxResponse), err
+	} else {
+		return nil, err
+	}
 }
   
 func (p *CRIProxy) RemovePodSandbox(ctx context.Context, req *cri.RemovePodSandboxRequest) (*cri.RemovePodSandboxResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.RemovePodSandboxResponse), err
-  }
+	if res != nil {
+		return res.(*cri.RemovePodSandboxResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) PodSandboxStatus(ctx context.Context, req *cri.PodSandboxStatusRequest) (*cri.PodSandboxStatusResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.PodSandboxStatusResponse), err
+	if res != nil {
+		return res.(*cri.PodSandboxStatusResponse), err
+	} else {
+		return nil, err
+	}
   }
   
 func (p *CRIProxy) ListPodSandbox(ctx context.Context, req *cri.ListPodSandboxRequest) (*cri.ListPodSandboxResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-	return res.(*cri.ListPodSandboxResponse), err
+	if res != nil {
+		return res.(*cri.ListPodSandboxResponse), err
+	} else {
+		return nil, err
+	}
 }
   
 func (p *CRIProxy) StartContainer(ctx context.Context, req *cri.StartContainerRequest) (*cri.StartContainerResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.StartContainerResponse), err
+	if res != nil {
+		return res.(*cri.StartContainerResponse), err
+	} else {
+		return nil, err
+	}
   }
   
 func (p *CRIProxy) StopContainer(ctx context.Context, req *cri.StopContainerRequest) (*cri.StopContainerResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.StopContainerResponse), err
+	if res != nil {
+		return res.(*cri.StopContainerResponse), err
+	} else {
+		return nil, err
+	}
   }
   
 func (p *CRIProxy) RemoveContainer(ctx context.Context, req *cri.RemoveContainerRequest) (*cri.RemoveContainerResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.RemoveContainerResponse), err
-  }
+	if res != nil {
+		return res.(*cri.RemoveContainerResponse), err
+	} else {
+		return nil, err
+	}
+}
   
   
 func (p *CRIProxy) ContainerStatus(ctx context.Context, req *cri.ContainerStatusRequest) (*cri.ContainerStatusResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.ContainerStatusResponse), err
-  }
+	if res != nil {
+		return res.(*cri.ContainerStatusResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) UpdateContainerResources(ctx context.Context, req *cri.UpdateContainerResourcesRequest) (*cri.UpdateContainerResourcesResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.UpdateContainerResourcesResponse), err
-  }
+	if res != nil {
+		return res.(*cri.UpdateContainerResourcesResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) ReopenContainerLog(ctx context.Context, req *cri.ReopenContainerLogRequest) (*cri.ReopenContainerLogResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.ReopenContainerLogResponse), err
-  }
+	if res != nil {
+		return res.(*cri.ReopenContainerLogResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) ExecSync(ctx context.Context, req *cri.ExecSyncRequest) (*cri.ExecSyncResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.ExecSyncResponse), err
-  }
+	if res != nil {
+		return res.(*cri.ExecSyncResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) Exec(ctx context.Context, req *cri.ExecRequest) (*cri.ExecResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.ExecResponse), err
-  }
+	if res != nil {
+		return res.(*cri.ExecResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) Attach(ctx context.Context, req *cri.AttachRequest) (*cri.AttachResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.AttachResponse), err
-  }
+	if res != nil {
+		return res.(*cri.AttachResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) PortForward(ctx context.Context, req *cri.PortForwardRequest) (*cri.PortForwardResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.PortForwardResponse), err
-  }
-  
+	if res != nil {
+		return res.(*cri.PortForwardResponse), err
+	} else {
+		return nil, err
+	}
+}
+
 func (p *CRIProxy) ContainerStats(ctx context.Context, req *cri.ContainerStatsRequest) (*cri.ContainerStatsResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.ContainerStatsResponse), err
-  }
+	if res != nil {
+		return res.(*cri.ContainerStatsResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) ListContainerStats(ctx context.Context, req *cri.ListContainerStatsRequest) (*cri.ListContainerStatsResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.ListContainerStatsResponse), err
-  }
+	if res != nil {
+		return res.(*cri.ListContainerStatsResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) PodSandboxStats(ctx context.Context, req *cri.PodSandboxStatsRequest) (*cri.PodSandboxStatsResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.PodSandboxStatsResponse), err
-  }
+	if res != nil {
+		return res.(*cri.PodSandboxStatsResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) ListPodSandboxStats(ctx context.Context, req *cri.ListPodSandboxStatsRequest) (*cri.ListPodSandboxStatsResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.ListPodSandboxStatsResponse), err
-  }
+	if res != nil {
+		return res.(*cri.ListPodSandboxStatsResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) UpdateRuntimeConfig(ctx context.Context, req *cri.UpdateRuntimeConfigRequest) (*cri.UpdateRuntimeConfigResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.UpdateRuntimeConfigResponse), err
-  }
+	if res != nil {
+		return res.(*cri.UpdateRuntimeConfigResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) Status(ctx context.Context, req *cri.StatusRequest) (*cri.StatusResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.StatusResponse), err
-  }
+	if res != nil {
+		return res.(*cri.StatusResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) CheckpointContainer(ctx context.Context, req *cri.CheckpointContainerRequest) (*cri.CheckpointContainerResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.CheckpointContainerResponse), err
-  }
+	if res != nil {
+		return res.(*cri.CheckpointContainerResponse), err
+	} else {
+		return nil, err
+	}
+}
 
 
 // This maybe requires a streaming solution
@@ -842,17 +1007,29 @@ func (p *CRIProxy) GetContainerEvents(req *cri.GetEventsRequest, srv cri.Runtime
   
 func (p *CRIProxy) ListMetricDescriptors(ctx context.Context, req *cri.ListMetricDescriptorsRequest) (*cri.ListMetricDescriptorsResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.ListMetricDescriptorsResponse), err
-  }
+	if res != nil {
+		return res.(*cri.ListMetricDescriptorsResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) ListPodSandboxMetrics(ctx context.Context, req *cri.ListPodSandboxMetricsRequest) (*cri.ListPodSandboxMetricsResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.ListPodSandboxMetricsResponse), err
-  }
+	if res != nil {
+		return res.(*cri.ListPodSandboxMetricsResponse), err
+	} else {
+		return nil, err
+	}
+}
   
 func (p *CRIProxy) RuntimeConfig(ctx context.Context, req *cri.RuntimeConfigRequest) (*cri.RuntimeConfigResponse, error) {
   	res, err := p.proxyRuntime(ctx, req, "", nil)
-  return res.(*cri.RuntimeConfigResponse), err
+	if res != nil {
+		return res.(*cri.RuntimeConfigResponse), err
+	} else {
+		return nil, err
+	}
 }
 
 
@@ -862,33 +1039,53 @@ func (p *CRIProxy) PullImage(ctx context.Context, req *cri.PullImageRequest) (*c
         logrus.Debug("PullImage called")
 //        printPullImageRequest(req)		
 	res, err := p.proxyImage(ctx, req, req.Image.Image, req.SandboxConfig)
-	return res.(*cri.PullImageResponse), err
+	if res != nil {
+		return res.(*cri.PullImageResponse), err
+	} else {
+		return nil, err
+	}
 }
 
 func (p *CRIProxy) RemoveImage(ctx context.Context, req *cri.RemoveImageRequest) (*cri.RemoveImageResponse, error) {
         logrus.Debug("RemoveImage called")	
 	res, err := p.proxyImage(ctx, req, req.Image.Image, nil)
-	return res.(*cri.RemoveImageResponse), err
+	if res != nil {
+		return res.(*cri.RemoveImageResponse), err
+	} else {
+		return nil, err
+	}
 }
 
 func (p *CRIProxy) ImageStatus(ctx context.Context, req *cri.ImageStatusRequest) (*cri.ImageStatusResponse, error) {
         logrus.Debug("ImageStatus called")	
 	res, err := p.proxyImage(ctx, req, req.Image.Image, nil)
-	return res.(*cri.ImageStatusResponse), err
+	if res != nil {
+		return res.(*cri.ImageStatusResponse), err
+	} else {
+		return nil, err
+	}
 }
 
 
 func (p *CRIProxy) ImageFsInfo(ctx context.Context, req *cri.ImageFsInfoRequest) (*cri.ImageFsInfoResponse, error) {
-        logrus.Debug("ImageFsInfo called")	
+	logrus.Debug("ImageFsInfo called")	
 	res, err := p.proxyImage(ctx, req, "", nil)
-	return res.(*cri.ImageFsInfoResponse), err
+	if res != nil {
+		return res.(*cri.ImageFsInfoResponse), err
+	} else {
+		return nil, err
+	}
 }
 
 
 func (p *CRIProxy) ListImages(ctx context.Context, req *cri.ListImagesRequest) (*cri.ListImagesResponse, error) {
-        logrus.Debug("ListImages called")	
+	logrus.Debug("ListImages called")	
 	res, err := p.proxyImage(ctx, req, "", nil)
-	return res.(*cri.ListImagesResponse), err
+	if err == nil && res != nil {
+		return res.(*cri.ListImagesResponse), err
+	} else {
+		return nil, err
+	}
 }
 
 
@@ -969,12 +1166,14 @@ func (p *CRIProxy) initialise() {
 // Main function
 func main() {
 
+
 	logrus.SetLevel(logrus.InfoLevel) // Change to DebugLevel, WarnLevel, etc.
 	
 	// Define flags with default values
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	logLevel := flag.String("log-level", "info", "Set the log level (debug, info, warn, error, fatal, panic)")
-	socketPath := flag.String("socket", "/var/run/crismux.sock", "path to crismux socket") 
+	socketPath := flag.String("socket", "/var/run/crismux.sock", "path to crismux socket")
+	checkTime := flag.Int("checktime", 30, "interval to check runtime status")
 
 	// Parse command-line flags
 	flag.Parse()
@@ -1017,15 +1216,22 @@ func main() {
 		}
 	}
 
-
-
+	var checktime time.Duration
+	if config.CheckTime > 0 {
+		checktime = time.Duration(config.CheckTime) * time.Second
+	} else {
+		checktime = time.Duration(*checkTime) * time.Second
+	}
+	logrus.Infof("Runtime status check interval = %s", checktime)
 	
 	proxy := &CRIProxy{
 		config:   config,
 		connPool: make(map[string]*grpc.ClientConn),
+		connReady: make(map[string]*bool),		
 		sandboxes: make(map[string]*PodSandboxInfo),
 		containers: make(map[string]string),
-		sandboxconfigs: make(map[string]string),				
+		sandboxconfigs: make(map[string]string),
+		checkTime : checktime,
 	}
 
 
@@ -1037,18 +1243,24 @@ func main() {
 	cri.RegisterRuntimeServiceServer(grpcServer, proxy)
 	cri.RegisterImageServiceServer(grpcServer, proxy)
 
-
-	
-		
+			
 	listener, err := net.Listen("unix", *socketPath)
 	if err != nil {
 		logrus.Fatalf("Failed to listen on socket: %v", err)
 	}
 
 	logrus.Infof("CRI Proxy started on %s", *socketPath)
-	defer proxy.CloseConnections() // Ensure cleanup
+	// Set up context that cancels on shutdown
+    ctx := context.Background()
+	go proxy.startStatusCheck(ctx)
 
 	if err := grpcServer.Serve(listener); err != nil {
 		logrus.Fatalf("Failed to start gRPC server: %v", err)
 	}
+	
+	defer proxy.CloseConnections() // Ensure cleanup
+
+	// Prevent main from exiting
+    select {} // block forever
+	
 }
