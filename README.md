@@ -32,7 +32,7 @@ crismux is a gRPC proxy server for Kubernetes Container Runtime Interface (CRI) 
 1. Clone the repository:
 
    ```sh
-   git clone https://git.gitlab.arm.com/research/smarter/edgeai/crismux.git
+   git clone https://github.com/smarter-project/crismux.git
    cd crismux
    ```
 
