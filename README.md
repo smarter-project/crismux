@@ -7,7 +7,7 @@ crismux is a gRPC proxy server for Kubernetes Container Runtime Interface (CRI) 
 - Supports multiple runtime classes
 - Reuses gRPC connections for efficiency
 - Supports Unix, vsock, and TCP endpoints
-- TLS support for secure communication
+
 
 ## Project Structure
 
