@@ -85,7 +85,6 @@ jobs:
     needs: build
 
     steps:
-      # 🔹 NEW: checkout so gh has a .git repo
       - name: Checkout repo
         uses: actions/checkout@v4
 
@@ -96,7 +95,7 @@ jobs:
 
       - name: List downloaded artifacts
         run: |
-          echo "Artifacts:"
+          echo "Artifacts tree:"
           ls -R ./dist
 
       - name: Create GitHub Release and upload assets
@@ -107,7 +106,7 @@ jobs:
         run: |
           echo "Creating / updating GitHub Release for tag $TAG"
 
-          # Try to create the release; if it already exists, just upload assets
+          # Create release if it doesn't exist
           if ! gh release create "$TAG" \
                 --repo "$GITHUB_REPOSITORY" \
                 --title "$TAG" \
@@ -116,12 +115,13 @@ jobs:
             echo "Release $TAG already exists, uploading assets only."
           fi
 
-          # Upload each artifact tarball
-          for file in ./dist/*; do
-            if [ -f "$file" ]; then
-              echo "Uploading asset $file"
-              gh release upload "$TAG" "$file" \
-                --repo "$GITHUB_REPOSITORY" \
-                --clobber
-            fi
+          echo "Finding artifacts under ./dist..."
+          find ./dist -type f -print
+
+          # Upload every file under ./dist (the tar.gz files)
+          find ./dist -type f -print0 | while IFS= read -r -d '' file; do
+            echo "Uploading asset $file"
+            gh release upload "$TAG" "$file" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
           done
