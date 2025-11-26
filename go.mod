@@ -5,7 +5,7 @@ go 1.23.0
 require (
 	github.com/gogo/protobuf v1.3.2
 	github.com/sirupsen/logrus v1.9.3
-	google.golang.org/grpc v1.57.0
+	google.golang.org/grpc v1.57.1
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/cri-api v0.28.2
 )
